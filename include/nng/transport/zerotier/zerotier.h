@@ -60,6 +60,8 @@
 // be created for the application.
 #define NNG_OPT_ZT_HOME "zt:home"
 
+#define NNG_OPT_ZT_PORT "zt:port"
+
 // NNG_OPT_ZT_NWID is the 64-bit network ID, represented using a uint64_t in
 // native byte order.  This is a read-only option; it is derived automatically
 // from the URL.

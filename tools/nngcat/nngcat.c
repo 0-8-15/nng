@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
 
 #include <nng/nng.h>
 #include <nng/protocol/bus0/bus.h>
@@ -53,6 +54,8 @@ size_t       keylen    = 0;
 void *       certfile  = NULL;
 size_t       certlen   = 0;
 const char * zthome    = NULL;
+const char * ztlan     = NULL; // TBD: make it an array (break on spaces)
+const char * ztport    = NULL;
 int          count     = 0;
 int          recvmaxsz = -1;
 
@@ -104,6 +107,8 @@ enum options {
 	OPT_VERSION,
 	OPT_RECVMAXSZ,
 	OPT_ZTHOME,
+	OPT_ZTPORT,
+	OPT_ZTLAN,
 };
 
 static nng_optspec opts[] = {
@@ -206,6 +211,16 @@ static nng_optspec opts[] = {
 	    .o_val  = OPT_ZTHOME,
 	    .o_arg  = true,
 	},
+	{
+	    .o_name = "zt-port",
+	    .o_val  = OPT_ZTPORT,
+	    .o_arg  = true,
+	},
+	{
+	    .o_name = "zt-lan",
+	    .o_val  = OPT_ZTLAN,
+	    .o_arg  = true,
+	},
 	{ .o_name = "version", .o_short = 'V', .o_val = OPT_VERSION },
 
 	// Sentinel.
@@ -271,6 +286,7 @@ help(void)
 	printf("  --cert <file>          (or alias -E <file>)\n");
 	printf("  --key <file>\n");
 	printf("  --zt-home <path>\n");
+	printf("  --zt-lan <ip>\n");
 	printf("\n<src> may be one of:\n");
 	printf("  --file <file>          (or alias -F <file>)\n");
 	printf("  --data <data>          (or alias -D <data>)\n");
@@ -842,6 +858,12 @@ main(int ac, char **av)
 		case OPT_ZTHOME:
 			zthome = arg;
 			break;
+		case OPT_ZTPORT:
+			ztport = arg;
+			break;
+		case OPT_ZTLAN:
+			ztlan = arg;
+			break;
 		case OPT_INSECURE:
 			insecure = 1;
 			break;
@@ -1080,6 +1102,14 @@ main(int ac, char **av)
 				fatal("Unable to get TLS config: %s",
 				    nng_strerror(rv));
 			}
+			if (ztport != NULL) {
+                                /* STRANGE: Order matters, set ztport before zthome! */
+				rv = nng_dialer_setopt_int(d, NNG_OPT_ZT_PORT, atoi(ztport));
+				if ((rv != 0) && (rv != NNG_ENOTSUP)) {
+					fatal("Unable to set ZT port: %s",
+					    nng_strerror(rv));
+				}
+			}
 			if (zthome != NULL) {
 				rv = nng_dialer_setopt(d, NNG_OPT_ZT_HOME,
 				    zthome, strlen(zthome) + 1);
@@ -1090,6 +1120,21 @@ main(int ac, char **av)
 			}
 			rv  = nng_dialer_start(d, async);
 			act = "dial";
+			if (rv == 0 && ztlan != NULL) {
+                                nng_sockaddr sa;
+                                struct in_addr addr;
+                                memset(&sa, 0, sizeof(sa));
+                                sa.s_family = NNG_AF_INET;
+                                if((rv=inet_aton(ztlan, &addr)) == 0) {
+                                  fatal("Address not valid IPv4 %s\n", ztlan);
+                                }
+                                sa.s_in.sa_addr = addr.s_addr;
+				rv = nng_dialer_setopt(d, NNG_OPT_ZT_ADD_LOCAL_ADDR, &sa, sizeof(sa));
+				if ((rv != 0) && (rv != NNG_ENOTSUP)) {
+					fatal("Unable to set ZT LAN: %s",
+					    nng_strerror(rv));
+				}
+			}
 			if ((rv == 0) && (verbose == OPT_VERBOSE)) {
 				char   ustr[256];
 				size_t sz;
@@ -1116,6 +1161,14 @@ main(int ac, char **av)
 				fatal("Unable to get TLS config: %s",
 				    nng_strerror(rv));
 			}
+			if (ztport != NULL) {
+                                /* STRANGE: Order matters, set ztport before zthome! */
+				rv = nng_listener_setopt_int(l, NNG_OPT_ZT_PORT, atoi(ztport));
+				if ((rv != 0) && (rv != NNG_ENOTSUP)) {
+					fatal("Unable to set ZT port: %s",
+					    nng_strerror(rv));
+				}
+			}
 			if (zthome != NULL) {
 				rv = nng_listener_setopt(l, NNG_OPT_ZT_HOME,
 				    zthome, strlen(zthome) + 1);
@@ -1126,6 +1179,21 @@ main(int ac, char **av)
 			}
 			rv  = nng_listener_start(l, async);
 			act = "listen";
+			if (rv==0 && ztlan != NULL) {
+                                nng_sockaddr sa;
+                                struct in_addr addr;
+                                memset(&sa, 0, sizeof(sa));
+                                sa.s_family = NNG_AF_INET;
+                                if((rv=inet_aton(ztlan, &addr)) == 0) {
+                                  fatal("Address not valid IPv4 %s\n", ztlan);
+                                }
+                                sa.s_in.sa_addr = addr.s_addr;
+				rv = nng_listener_setopt(l, NNG_OPT_ZT_ADD_LOCAL_ADDR, &sa, sizeof(sa));
+				if ((rv != 0) && (rv != NNG_ENOTSUP)) {
+					fatal("Unable to set ZT LAN: %s",
+					    nng_strerror(rv));
+				}
+			}
 			if ((rv == 0) && (verbose == OPT_VERBOSE)) {
 				char   ustr[256];
 				size_t sz;

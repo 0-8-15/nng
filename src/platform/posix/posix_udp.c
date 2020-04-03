@@ -187,14 +187,14 @@ nni_posix_udp_cb(nni_posix_pfd *pfd, unsigned events, void *arg)
 	}
 	nni_mtx_unlock(&udp->udp_mtx);
 }
-
+#include <stdio.h>
 int
 nni_plat_udp_open(nni_plat_udp **upp, nni_sockaddr *bindaddr)
 {
 	nni_plat_udp *          udp;
 	int                     salen;
 	struct sockaddr_storage sa;
-	int                     rv;
+	int                     rv, f;
 
 	if ((salen = nni_posix_nn2sockaddr(&sa, bindaddr)) < 1) {
 		return (NNG_EADDRINVAL);
@@ -213,6 +213,8 @@ nni_plat_udp_open(nni_plat_udp **upp, nni_sockaddr *bindaddr)
 		NNI_FREE_STRUCT(udp);
 		return (rv);
 	}
+
+	f=1; setsockopt(udp->udp_fd, SOL_SOCKET, SO_REUSEADDR, &f, sizeof(f));
 
 	if (bind(udp->udp_fd, (void *) &sa, salen) != 0) {
 		rv = nni_plat_errno(errno);

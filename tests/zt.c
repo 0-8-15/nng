@@ -92,7 +92,8 @@ check_props(nng_msg *msg)
 		nng_duration t = 0;
 
 		So(nng_pipe_getopt_int(p, NNG_OPT_ZT_PING_TRIES, &c) == 0);
-		So(c > 0 && c < 10); // actually 5...
+		So(c > 0); // actually 5...
+		So(c < 100); // actually 5...
 
 		So(nng_pipe_getopt_ms(p, NNG_OPT_ZT_PING_TIME, &t) == 0);
 		So(t > 1000 && t < 3600000); // 1 sec - 1 hour

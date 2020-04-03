@@ -217,6 +217,7 @@ struct zt_creq {
 struct zt_ep {
 	nni_list_node ze_link;
 	char          ze_home[NNG_MAXADDRLEN]; // should be enough
+	uint16_t      ze_port;
 	zt_node *     ze_ztn;
 	uint64_t      ze_nwid;
 	bool          ze_running;
@@ -1416,7 +1417,7 @@ zt_node_destroy(zt_node *ztn)
 }
 
 static int
-zt_node_create(zt_node **ztnp, const char *path)
+zt_node_create(zt_node **ztnp, const char *path, uint16_t port)
 {
 	zt_node *          ztn;
 	nng_sockaddr       sa4;
@@ -1429,10 +1430,13 @@ zt_node_create(zt_node **ztnp, const char *path)
 	// Probably we should support coping with the lack of either of them.
 
 	// We want to bind to any address we can (for now).
+        // fprintf(stderr, "binding ZT port %d\n", port);
 	memset(&sa4, 0, sizeof(sa4));
 	sa4.s_in.sa_family = NNG_AF_INET;
+        sa4.s_in.sa_port = port;
 	memset(&sa6, 0, sizeof(sa6));
 	sa6.s_in6.sa_family = NNG_AF_INET6;
+        sa6.s_in6.sa_port = port;
 
 	if ((ztn = NNI_ALLOC_STRUCT(ztn)) == NULL) {
 		return (NNG_ENOMEM);
@@ -1538,6 +1542,7 @@ zt_node_find(zt_ep *ep)
 	int                      rv;
 	ZT_VirtualNetworkConfig *cf;
 
+        if(nng_zt_register() != 0) { return -1; }
 	NNI_LIST_FOREACH (&zt_nodes, ztn) {
 		if (strcmp(ep->ze_home, ztn->zn_path) == 0) {
 			goto done;
@@ -1546,9 +1551,26 @@ zt_node_find(zt_ep *ep)
 
 	// We didn't find a node, so make one.  And try to
 	// initialize it.
-	if ((rv = zt_node_create(&ztn, ep->ze_home)) != 0) {
+	if ((rv = zt_node_create(&ztn, ep->ze_home, ep->ze_port)) != 0) {
 		return (rv);
 	}
+
+	//* Add LAN interfaces
+	if (strlen(ep->ze_lan) != 0) {
+          struct sockaddr_storage addr;
+          struct sockaddr_in *    sin = (void*)&addr;
+          memset(&addr, 0, sizeof(addr));
+          sin->sin_family      = AF_INET;
+          if((rv=inet_aton(ep->ze_lan, &sin->sin_addr)) == 0) {
+            // fprintf(stderr, "address not valid IPv4 %s\n", ep->ze_lan);
+            return (-1);
+          }
+          if ((rv = ZT_Node_addLocalInterfaceAddress(ztn->zn_znode, &addr)) == 0) {
+            // fprintf(stderr, "ZT_Node_addLocalInterfaceAddress failed\n");
+            return (-1);
+          }
+          // fprintf(stderr, "added local interface %s\n", ep->ze_lan);
+	} //*/
 
 	// Load moons
 	if (strlen(ep->ze_home) != 0) {
@@ -1556,6 +1578,7 @@ zt_node_find(zt_ep *ep)
 		    NNI_FILE_WALK_FILES_ONLY | NNI_FILE_WALK_SHALLOW);
 	}
 
+        // ZT_Node_contact_orbits(ztn->zn_znode, NULL, 0); // port is actually unused
 done:
 
 	ep->ze_ztn = ztn;
@@ -2618,6 +2641,37 @@ zt_ep_get_home(void *arg, void *data, size_t *szp, nni_type t)
 }
 
 static int
+zt_ep_set_port(void *arg, const void *data, size_t sz, nni_type t)
+{
+	int    rv = 0;
+	zt_ep *ep = arg;
+
+
+	nni_mtx_lock(&zt_lk);
+	if (ep->ze_running) {
+		rv = NNG_ESTATE;
+	} else {
+          ep->ze_port=*(uint16_t *)data;
+
+	}
+	nni_mtx_unlock(&zt_lk);
+
+	return (rv);
+}
+
+static int
+zt_ep_get_port(void *arg, void *data, size_t *szp, nni_type t)
+{
+	zt_ep *ep = arg;
+	int    rv = 0;
+
+	//nni_mtx_lock(&zt_lk);
+	*(uint16_t *)data = ep->ze_port;
+	//nni_mtx_unlock(&zt_lk);
+	return -1*(rv);
+}
+
+static int
 zt_ep_get_url(void *arg, void *data, size_t *szp, nni_type t)
 {
 	char     ustr[64]; // more than plenty
@@ -3060,6 +3114,11 @@ static nni_option zt_dialer_options[] = {
 	    .o_set  = zt_ep_set_home,
 	},
 	{
+	    .o_name = NNG_OPT_ZT_PORT,
+	    .o_get  = zt_ep_get_port,
+	    .o_set  = zt_ep_set_port,
+	},
+	{
 	    .o_name = NNG_OPT_ZT_NODE,
 	    .o_get  = zt_ep_get_node,
 	},
@@ -3134,6 +3193,11 @@ static nni_option zt_listener_options[] = {
 	    .o_set  = zt_ep_set_home,
 	},
 	{
+	    .o_name = NNG_OPT_ZT_PORT,
+	    .o_get  = zt_ep_get_port,
+	    .o_set  = zt_ep_set_port,
+	},
+	{
 	    .o_name = NNG_OPT_ZT_NODE,
 	    .o_get  = zt_ep_get_node,
 	},
@@ -3170,6 +3234,14 @@ static nni_option zt_listener_options[] = {
 	{
 	    .o_name = NNG_OPT_LOCADDR,
 	    .o_get  = zt_ep_get_locaddr,
+	},
+	{
+	    .o_name = NNG_OPT_ZT_ADD_LOCAL_ADDR,
+	    .o_set  = zt_ep_set_add_local_addr,
+	},
+	{
+	    .o_name = NNG_OPT_ZT_CLEAR_LOCAL_ADDRS,
+	    .o_set  = zt_ep_set_clear_local_addrs,
 	},
 	// terminate list
 	{
